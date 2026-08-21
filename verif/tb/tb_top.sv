@@ -39,7 +39,7 @@ module tb_top;
   );
 
   // Protocol checkers that only need an interface are instantiated directly;
-  // the per-cache checker is attached by bind in sva_bind.sv.
+  // the per-cache checker is bound at the bottom of this file.
   bus_sva  u_bus_sva  (.clk(clk), .rst_n(rst_n), .bus(bus_i));
   axil_sva u_axil_sva (.clk(clk), .rst_n(rst_n), .axi(mem_i));
 
@@ -77,8 +77,10 @@ module tb_top;
   initial begin
     uvm_config_db #(virtual bus_if)::set(null, "*", "bus_vif", bus_i);
     uvm_config_db #(virtual axil_if)::set(null, "*", "mem_vif", mem_i);
-    // Lets every generate-scoped config_db set above complete first.
-    #1;
+    // Yields to the generate scoped sets above without advancing time. 
+    // UVM 1.2 fatals (RUNPHSTIME) if run_test() starts at a a non-zero
+    // time, so drop the yield races build_phase against those blocks. 
+    #0;
     run_test();
   end
 
@@ -88,5 +90,28 @@ module tb_top;
       $dumpvars(0, tb_top);
     end
   end
+
+// sva bind instantiated here
+  bind l1_cache cache_sva u_cache_sva (
+  .clk              (clk),
+  .rst_n            (rst_n),
+  .core_req         (core.req),
+  .core_gnt         (core.gnt),
+  .core_rvalid      (core.rvalid),
+  .core_addr        (core.addr),
+  .core_we          (core.we),
+  .core_be          (core.be),
+  .core_wdata       (core.wdata),
+  .bus_req          (bus.req[CORE_ID]),
+  .bus_gnt          (bus.gnt[CORE_ID]),
+  .bus_op           (bus.op[CORE_ID]),
+  .bus_rsp_valid    (bus.rsp_valid[CORE_ID]),
+  .snoop_valid      (bus.snoop_valid),
+  .snoop_sel        (bus.snoop_sel[CORE_ID]),
+  .snoop_op         (bus.snoop_op),
+  .snoop_ack        (bus.snoop_ack[CORE_ID]),
+  .snoop_hit        (bus.snoop_hit[CORE_ID]),
+  .snoop_pass_dirty (bus.snoop_pass_dirty[CORE_ID])
+);
 
 endmodule

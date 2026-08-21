@@ -18,7 +18,6 @@
 ../verif/sva/cache_sva.sv
 ../verif/sva/bus_sva.sv
 ../verif/sva/axil_sva.sv
-../verif/sva/sva_bind.sv
 
 ../verif/cache_uvm_pkg.sv
 

@@ -210,7 +210,10 @@ class cache_coverage extends uvm_component;
 
     cg_mesi.sample(it.old_state, it.new_state, tag_changed, it.core_id);
 
-    if (tag_changed)
+    // A way is being installed with a line: it was free, or a different line 
+    // is displacing it. A tag change alone misses a fill into an invalid way 
+    // whose stale tag already matches the incoming one. 
+    if (it.new_state != MESI_I && (tag_changed || it.old_state == MESI_I))
       cg_alloc.sample(it.old_state, it.way_idx, index_t'(it.set_idx), it.core_id);
 
     if (cg_share != null)

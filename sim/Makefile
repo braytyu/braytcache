@@ -1,3 +1,13 @@
+# NOTE: NEXERCISED. no targets were ever run successfully. 
+#
+# All targets were written for a full simulator license. 
+# In the absence of a license, the tool_check targets can be used to verify that the
+# tool is capable of building the testbench, and the check-uvm target can be
+# used to verify that the UVM library is present and linked.
+# 
+# In the execution of this project, we used Questa vlog.vopt plus Synopsys VCS on EDA playground.
+# For execution steps, see ../docs/SETUP.md
+
 TEST          ?= random_test
 SEED          ?= 1
 WAYS          ?= 2
@@ -8,7 +18,7 @@ VERB          ?= UVM_LOW
 BUG           ?=
 PLUS          ?=
 
-FLIST  = cachebrayt.f
+FLIST  = braytcache.f
 DEFS   = +define+CFG_NUM_WAYS=$(WAYS) \
          +define+CFG_NUM_SETS=$(SETS) \
          +define+CFG_LINE_BYTES=$(LINE) \

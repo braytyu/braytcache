@@ -263,6 +263,16 @@ class producer_consumer_vseq extends cache_base_vseq;
     data_addr = region_lo;
     flag_addr = region_lo + addr_t'(LINE_BYTES);
 
+    // Unwritten memory returns a hash of its address, not zero, so the flag has
+    // to be seeded below the first message index before the consumer polls it.
+    begin
+      core_single_seq s;
+      s = core_single_seq::type_id::create("flag_init");
+      if (!s.randomize() with { op == CORE_STORE; addr == flag_addr; wdata == '0; be == '1; })
+        `uvm_error(get_type_name(), "flag init randomize failed")
+      s.start(p_sequencer.core_sqr[0]);
+    end
+
     fork
       producer();
       consumer();
@@ -294,7 +304,6 @@ class producer_consumer_vseq extends cache_base_vseq;
     core_single_seq s;
     int unsigned    polls;
     data_t          seen_flag;
-    data_t          expect_pl;
 
     for (int unsigned k = 1; k <= n_msgs; k++) begin
       polls     = 0;
@@ -320,11 +329,14 @@ class producer_consumer_vseq extends cache_base_vseq;
         `uvm_error(get_type_name(), "consumer data randomize failed")
       s.start(p_sequencer.core_sqr[1]);
 
-      expect_pl = payload_of(seen_flag);
-      if (s.observed_rdata !== expect_pl)
+      // The producer runs concurrently, when this load completes the
+      // payload may be newer than the flag we observed. The
+      // ordering property is that it can never be older.
+      if (s.observed_rdata[31:16] !== 16'hc0de ||
+          s.observed_rdata[15:0]   <  seen_flag[15:0])
         `uvm_error(get_type_name(),
-          $sformatf("message passing violated: flag=%0d payload=0x%08h expected=0x%08h",
-                    seen_flag, s.observed_rdata, expect_pl))
+          $sformatf("message passing violated: flag=%0d but payload=0x%08h is stale",
+                    seen_flag, s.observed_rdata))
     end
   endtask
 

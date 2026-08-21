@@ -2,7 +2,7 @@
 
 // Standalone capability probe. No project dependencies, no UVM.
 //
-// Run this BEFORE attempting to build cachebrayt. Each stage exercises exactly
+// Run this BEFORE attempting to build braytcache. Each stage exercises exactly
 // one language feature the testbench depends on, so whichever stage fails to
 // compile tells you precisely which capability your licence is missing.
 //
@@ -88,7 +88,7 @@ module tool_check;
     $display("[tool_check] stage 3  concurrent assertions   : compiled and evaluated");
 
     $display("");
-    $display("[tool_check] ALL STAGES PASSED -- this tool can build the cachebrayt testbench");
+    $display("[tool_check] ALL STAGES PASSED -- this tool can build the braytcache testbench");
     $display("[tool_check] now run 'make check-uvm' to confirm the UVM library is present");
     $finish;
   end

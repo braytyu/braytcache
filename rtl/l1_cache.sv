@@ -202,7 +202,9 @@ module l1_cache #(
   assign snoopable = (fsm_q != ST_LOOKUP);
   assign sn_take   = sn_active && snoopable && !sn_ack_q;
 
-  assign bus.snoop_ack[CORE_ID]        = sn_ack_q;
+  // Gated by sn_active: sn_ack_q is registered and clears a cycle after the
+  // snoop is withdrawn, so ungated it would assert while unselected. 
+  assign bus.snoop_ack[CORE_ID]        = sn_ack_q && sn_active;
   assign bus.snoop_hit[CORE_ID]        = sn_hit_q;
   assign bus.snoop_pass_dirty[CORE_ID] = sn_pd_q;
   assign bus.snoop_data[CORE_ID]       = sn_data_q;
