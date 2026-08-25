@@ -98,20 +98,22 @@ There are three protocol boundaries and three different protocols:
 | L1 ↔ L1 | Simplified ACE-inspired bus | Provides the snoop, ownership, and cache-line data signaling required for MESI coherence; AXI4-Lite cannot carry these transactions. |
 | Interconnect ↔ memory | AXI4-Lite | Uses a standard point-to-point memory protocol for line fills and writebacks, with each cache-line word transferred as a separate single-beat transaction. |
 
-Each choice is justified in [Design decisions](#design-decisions) below.
+Protocol choice and design is justified in [Design decisions](#design-decisions) below.
 
 ---
 
 ## Design decisions
 
-All design decisions made and their rationale during bring up of this project are discussed here for transparency of thought process.
+All design decisions made and their rationale during bring up of this project are discussed here.
 
 Note: decisions are marked in repo with a `DECISION:` comment, so
 `grep -rn "DECISION:" rtl/ verif/` allows you to locate where these decisions live. 
 
+---
+
 ### Interfaces
 
-#### **The core side is OBI-style req/gnt/rvalid, not AXI.**
+#### OBI-style req/gnt/rvalid for core, not AXI.
 Real cores do not talk to their L1 over AXI (real cores such as Ibex and CV32E40P, which are open source cores by lowRISC and OpenHW Group), they present a
 `req`/`gnt` address phase followed by an `rvalid` response phase. Putting AXI here would add five independent channels, IDs and
 burst logic to a boundary that issues one aligned word at a time, which brings driver
@@ -119,48 +121,40 @@ and monitor complexity with no additional coverage.
 *Trade-off:* the core agent is custom, so it is not reusable outside this
 project.
 
-#### **The coherence bus is a simplified ACE, and it is not AXI4-Lite for a structural reason.**
+#### The coherence bus is a simplified ACE, not AXI4-Lite.
 AXI4-Lite physically cannot carry coherence. It has no snoop address channel, no
 snoop response channel, no snoop data channel, and no way for a master to
-declare or be told a cache-line state. It is a single-beat, point-to-point
-read/write protocol. Adding coherence to it means inventing sideband signalling,
-at which point the protocol is no longer AXI4-Lite and the standard has bought
-nothing.
+declare or know of a cache-line state. It is a single-beat, point-to-point
+read/write protocol. 
 
-The correct answer in the AMBA family is **ACE**, ARM's coherency extension to
+In the AMBA family there exists **ACE**, ARM's coherency extension to
 AXI, which adds exactly those channels (AC / CR / CD) and whose transaction set
-maps one-to-one onto MESI. So this bus borrows ACE's vocabulary — `ReadShared`,
+maps one-to-one onto MESI. Our custom bus borrows ACE's vocabulary: `ReadShared`,
 `ReadUnique`, `CleanUnique`, `WriteBack`, and the `IsShared` / `PassDirty`
-response attributes — because using the industry names for the industry concepts
-makes the design legible to anyone who knows ACE.
+response attributes to make the design legible. 
 
-What is simplified: a single atomic shared bus instead of ACE's independent
+The coherence bus is simplified to a single atomic shared bus instead of ACE's independent
 channels, ordering rules, barriers and distributed virtual memory transactions.
-*Trade-off:* this is **ACE-inspired, not ACE-compliant**, and should never be
-described as the latter. Full ACE is a multi-week project on its own.
+*Trade-off:* this is **ACE-inspired, not ACE-compliant**, implementing full ACE is a [Future extension](Future-extensions).
 
-#### **The memory side is genuine AXI4-Lite.**
+#### AXI4-Lite for memory side.
 This is the one boundary where a standard protocol is both a natural fit and
 cheap: a line fill really is a sequence of plain address/data/response
 transactions with no coherence content. Making it real AXI4-Lite yields a
-reusable slave agent, a full set of protocol assertions worth writing, and a
-natural place to inject randomised latency and backpressure that perturbs the
+reusable slave agent, a full set of protocol assertions, and a place to inject randomised latency and backpressure that stimulates the
 timing relationship between fills and coherence traffic.
 *Trade-off:* AXI4-Lite has no bursts, so a line fill is `LINE_WORDS` separate
-single-beat transactions rather than one burst. Correct, but not what a real
-fill port would do; AXI4 with bursts would be more realistic at the cost of
-burst and ID handling that adds no verification value here.
+single-beat transactions rather than one burst. AXI4 with bursts would be more realistic (at the cost of
+burst and ID handling).
 
-#### **Why not just use one protocol everywhere.**
-Using AXI at all three boundaries would be the cargo-cult answer: wrong at the
-core side, impossible at the coherence side, and only correct at the memory
-side. Real SoCs use different protocols at different boundaries because the
-boundaries have different requirements, and choosing correctly is the skill
-being demonstrated.
+#### Why not just use one protocol everywhere?
+Different protocols are exercised at different boundaries, just like in real SoC's. 
+
+---
 
 ### Microarchitecture
 
-#### **The bus is atomic, so MESI has no transient states.**
+#### The bus is atomic, so MESI has no transient states.
 A grant is held across snoop, memory access and response, so a cache is never
 snooped while it owns the bus and every line is in one of the four stable states
 at every clock edge. See [Why the bus is atomic](#why-the-bus-is-atomic).
@@ -168,7 +162,7 @@ at every clock edge. See [Why the bus is atomic](#why-the-bus-is-atomic).
 transient state machine (`IM_AD`, `SM_AD`, …), which is where most genuine MESI
 difficulty lives.
 
-#### **The cache is blocking, with one outstanding miss.**
+#### The cache is blocking, with one outstanding miss.
 MSHRs, hit-under-miss and memory-level parallelism would have consumed the whole
 schedule and displaced the coherence work, which is the point of the project.
 Blocking also keeps the scoreboard's ordering argument tractable: a completing
@@ -176,7 +170,7 @@ access always retires before the ownership transfer that follows it.
 *Trade-off:* the design has no memory-level parallelism and its performance is
 uninteresting. This is a correctness project, not a performance one.
 
-#### **Invalid ways are preferred over the PLRU victim, lowest index first.**
+#### Invalid ways are preferred over the PLRU victim, lowest index first.
 Allocating into a free way avoids a pointless eviction. Breaking ties by lowest
 index rather than arbitrarily keeps victim selection deterministic, which makes
 failures reproducible across seeds.
@@ -189,16 +183,18 @@ This is the only genuine race an atomic bus does not remove, and it is handled
 in the RTL rather than assumed away. Details in
 [The one race an atomic bus does not remove](#the-one-race-an-atomic-bus-does-not-remove).
 
-#### **Silent clean eviction is implemented, not avoided.**
+#### Silent clean eviction is implemented, not avoided.
 Dropping an `S` or `E` line without telling anyone is legal MESI, and it means a
 cache can sit in `S` believing a line is shared when it is the only holder. It
 would have been easier to notify on every eviction; implementing the
 conservative-but-imprecise behaviour is more faithful, and it forces the
 reference model to avoid assuming precision.
 
+---
+
 ### Configuration and parameterisation
 
-#### **Geometry is a verification variable, not a constant.**
+#### Geometry is a verification variable, not a constant.
 `NUM_WAYS`, `NUM_SETS`, `LINE_BYTES` and `NUM_CORES` are all configurable, for
 three distinct reasons:
 
@@ -214,7 +210,7 @@ three distinct reasons:
    under random stimulus over a 4 KB region, conflict misses, evictions and
    writebacks happen constantly instead of rarely.
 
-#### **Both geometries are exercised, and the second one is not a formality.**
+#### Both geometries are exercised, and the second one is not a formality.
 `eviction_test` passes at 4-way/8-set with no source changes, which is what makes
 the first two claims above evidence rather than intent — at four ways the PLRU is
 genuinely two levels of decision over three bits per set, not a single LRU bit.
@@ -224,7 +220,7 @@ from 14 to 3, because a working set that thrashed a 2-way set largely fits in a
 it fall out of your own design is a useful check that the replacement logic is
 doing what it claims.
 
-#### **Configuration is by `+define+`, not module parameters.**
+#### Configuration is by `+define+`, not module parameters.
 The geometry has to be visible inside a `package` — the address field widths,
 `tag_t` / `index_t` / `line_t`, and the helper functions all depend on it — and
 SystemVerilog packages cannot be parameterised. The UVM classes import that same
@@ -235,7 +231,7 @@ per-run inside a single build. It is a per-build regression axis instead.
 
 ### Verification architecture
 
-#### **The environment is whitebox on purpose.**
+#### The environment is whitebox on purpose.
 SWMR is a statement about *state*, not about transactions, and it cannot be
 checked from the core interfaces at all. A blackbox-only testbench catches a
 coherence bug only in the seeds where it happens to surface as a wrong load
@@ -245,7 +241,7 @@ state arrays turns a latent, seed-dependent bug into an immediate error.
 routing everything through one interface and one generate block in
 [verif/tb/tb_top.sv](verif/tb/tb_top.sv), so a rename touches one file.
 
-#### **The probe is wired with hierarchical assignments rather than `bind`.**
+#### The probe is wired with hierarchical assignments rather than `bind`.
 `bind` is the more idiomatic construct, but the target flow was uncertain and
 hierarchical references index identically on every simulator. `bind` *is* used
 for the assertion modules, where it is both standard and well supported.
@@ -258,26 +254,26 @@ already serialises same-address accesses, and the reasoning is written out in
 [What gets checked](#what-gets-checked). Building an order-reconstruction engine
 would have been more code and more places to be wrong.
 
-#### **Unwritten memory returns a deterministic hash of its address.**
+#### Unwritten memory returns a deterministic hash of its address.
 `mem_model::backing_value()` is used both by the AXI4-Lite slave and to seed the
 scoreboard's golden memory, so a load from a location the test never wrote still
 has exactly one correct answer. The usual "X on the first read" blind spot
 disappears without pre-initialising memory or restricting the address space.
 
-#### **Coverage is reported by the testbench itself.**
+#### *Coverage is reported by the testbench itself.
 The target flow has no coverage database and no way to merge across runs, so
 `final_phase` prints its own table via `get_inst_coverage()`. This is
 simulator-independent and survives any flow.
 *Trade-off:* no cross-run merging, so the reported number is per-run rather than
 cumulative.
 
-#### **Forbidden protocol states are `illegal_bins`, not uncovered bins.**
+#### Forbidden protocol states are `illegal_bins`, not uncovered bins.
 An uncovered bin is something you failed to hit. An illegal bin is something the
 protocol forbids, and hitting it is an error at the moment it happens. Encoding
 the eight forbidden MESI state pairs this way turns the coverage model into a
 checker.
 
-#### **Bugs are injectable by `+define+`.**
+#### Bugs are injectable by `+define+`.
 Five one-line RTL mutations, each of which must make the regression fail. It is
 the cheapest available evidence that the checkers actually check something,
 rather than a testbench that passes because it looks at nothing.
