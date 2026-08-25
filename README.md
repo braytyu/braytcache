@@ -148,9 +148,7 @@ single-beat transactions rather than one burst. AXI4 with bursts would be more r
 burst and ID handling).
 
 #### Why not just use one protocol everywhere?
-Different protocols are exercised at different boundaries, just like in real SoC's. 
-
----
+Different protocols are exercised at different boundaries, like in real SoC's. 
 
 ### Microarchitecture
 
