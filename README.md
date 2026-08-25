@@ -23,30 +23,6 @@ run)
 
 ---
 
-## Table of contents
-
-- [Project motivation](#project-motivation)
-- [Architecture](#architecture)
-- [Design decisions](#design-decisions)
-- [The cache](#the-cache)
-- [Coherence protocol](#coherence-protocol)
-- [Interfaces](#interfaces)
-- [Verification environment](#verification-environment)
-- [What gets checked](#what-gets-checked)
-- [Functional coverage](#functional-coverage)
-- [Assertions](#assertions)
-- [Stimulus](#stimulus)
-  - [Tests — what each one is for](#tests-veriftestscache_testssv)
-- [Bug injection](#bug-injection)
-- [Running it](#running-it)
-- [Results](#results)
-- [What the runs revealed](#what-the-runs-revealed)
-- [Scope decisions and limitations](#scope-decisions-and-limitations)
-- [Future extensions](#future-extensions)
-- [Repository layout](#repository-layout)
-
----
-
 ## Project motivation
 
 I wanted to use this project to exercise my RTL design and verification skills that I had developed over the course of my most recent internship. After deliberating on a project to demonstrate these skills, I chose to develop a two core L1 data cache with MESI cache coherence. This is because I believe there would be interesting interactions between independent components, shared state, ownership, data movement, and timing; making this a suitable option.
@@ -70,6 +46,30 @@ intentionally focused enough to remain manageable, while the verification
 environment is designed to demonstrate the CRV workflow: constrained stimulus,
 transaction monitoring, reference-model checking, functional coverage,
 assertions, and failure diagnosis.
+
+---
+
+## Table of contents
+
+- [Project motivation](#project-motivation)
+- [Architecture](#architecture)
+- [Design decisions](#design-decisions)
+- [The cache](#the-cache)
+- [Coherence protocol](#coherence-protocol)
+- [Interfaces](#interfaces)
+- [Verification environment](#verification-environment)
+- [What gets checked](#what-gets-checked)
+- [Functional coverage](#functional-coverage)
+- [Assertions](#assertions)
+- [Stimulus](#stimulus)
+  - [Tests — what each one is for](#tests-veriftestscache_testssv)
+- [Bug injection](#bug-injection)
+- [Running it](#running-it)
+- [Results](#results)
+- [What the runs revealed](#what-the-runs-revealed)
+- [Scope decisions and limitations](#scope-decisions-and-limitations)
+- [Future extensions](#future-extensions)
+- [Repository layout](#repository-layout)
 
 ---
 
@@ -258,26 +258,26 @@ already serialises same-address accesses, and the reasoning is written out in
 [What gets checked](#what-gets-checked). Building an order-reconstruction engine
 would have been more code and more places to be wrong.
 
-**Unwritten memory returns a deterministic hash of its address.**
+#### **Unwritten memory returns a deterministic hash of its address.**
 `mem_model::backing_value()` is used both by the AXI4-Lite slave and to seed the
 scoreboard's golden memory, so a load from a location the test never wrote still
 has exactly one correct answer. The usual "X on the first read" blind spot
 disappears without pre-initialising memory or restricting the address space.
 
-**Coverage is reported by the testbench itself.**
+#### **Coverage is reported by the testbench itself.**
 The target flow has no coverage database and no way to merge across runs, so
 `final_phase` prints its own table via `get_inst_coverage()`. This is
 simulator-independent and survives any flow.
 *Trade-off:* no cross-run merging, so the reported number is per-run rather than
 cumulative.
 
-**Forbidden protocol states are `illegal_bins`, not uncovered bins.**
+#### **Forbidden protocol states are `illegal_bins`, not uncovered bins.**
 An uncovered bin is something you failed to hit. An illegal bin is something the
 protocol forbids, and hitting it is an error at the moment it happens. Encoding
 the eight forbidden MESI state pairs this way turns the coverage model into a
 checker.
 
-**Bugs are injectable by `+define+`.**
+#### **Bugs are injectable by `+define+`.**
 Five one-line RTL mutations, each of which must make the regression fail. It is
 the cheapest available evidence that the checkers actually check something,
 rather than a testbench that passes because it looks at nothing.
