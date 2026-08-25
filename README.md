@@ -1,11 +1,10 @@
-# braytcache — MESI-coherent L1 data cache with a UVM verification environment
+# braytcache — MESI-Coherent L1 Data Cache and UVM Verification Environment
 
-A two-core, set-associative, write-back L1 data cache that maintains **MESI
-coherence** over a snooping interconnect, verified with a constrained-random
-**UVM** environment built around coherence invariants rather than
-transaction-level golden models alone.
-
-The design is deliberately modest. The verification environment is the point.
+braytcache is a two-core, set-associative, write-back L1 data cache that
+maintains **MESI coherence** over a snooping interconnect. It is verified by a
+constrained-random **UVM** environment that combines transaction-level data
+checking with coherence-invariant checking, functional coverage, and protocol
+assertions.
 
 ---
 
@@ -13,25 +12,20 @@ The design is deliberately modest. The verification environment is the point.
 
 **12 / 12 tests pass** &nbsp;·&nbsp; **5 / 5 injected bugs detected** &nbsp;·&nbsp;
 **2 / 2 geometries** &nbsp;·&nbsp; **98.92 %** functional coverage (best single
-run) &nbsp;·&nbsp; **5 defects** found by the tools and written up
+run)
 
 | | |
 |---|---|
 | **RTL** | Two MESI L1 caches, snooping interconnect, AXI4-Lite memory. 8 files. |
 | **Verification** | UVM: 4 agents, 6 covergroups, 6 independent checking mechanisms, 12 tests, 3 SVA modules. 29 files. |
-| **Toolchain** | Questa 2025.2 compiles and elaborates; Synopsys VCS on EDA Playground simulates. Both clean. |
-| **Evidence** | [Results](#results) · [What the runs revealed](#what-the-runs-revealed) · [Bug injection](#bug-injection) · [Debug log](docs/DEBUG_LOG.md) |
-
-The two results worth pointing at: **no single checking mechanism catches more
-than two of the five injected bugs**, and the `BUG_3` run returned coverage
-**byte-identical** to the clean run while eleven data corruptions were present.
-Both are measurements, not claims.
+| **Toolchain** | Questa Altera FPGA Starter Edition 2025.2 for compilation and elaboration; Synopsys VCS on EDA Playground for simulation. |
+| **Evidence** | [Results](#results) · [Run screenshots](docs/RUN_SCREENSHOTS.md) · [What the runs revealed](#what-the-runs-revealed) · [Bug injection](#bug-injection) · [Debug log](docs/DEBUG_LOG.md) |
 
 ---
 
 ## Table of contents
 
-- [Why this project](#why-this-project)
+- [Project motivation](#project-motivation)
 - [Architecture](#architecture)
 - [Design decisions](#design-decisions)
 - [The cache](#the-cache)
@@ -53,30 +47,29 @@ Both are measurements, not claims.
 
 ---
 
-## Why this project
+## Project motivation
 
-Most student cache projects verify a single cache with directed tests: write a
-value, read it back, check it. That proves almost nothing, because a single
-cache has no interesting failure modes.
+I wanted to use this project to exercise my RTL design and verification skills that I had developed over the course of my most recent internship. After deliberating on a project to demonstrate these skills, I chose to develop a two core L1 data cache with MESI cache coherence. This is because I believe there would be interesting interactions between independent components, shared state, ownership, data movement, and timing; making this a suitable option.
 
-The interesting failure modes appear when **two caches disagree about who owns a
-line**. Those bugs are invisible to a transaction-level scoreboard that only
-watches the core interfaces, because a coherence violation can persist for
-thousands of cycles before it produces a wrong load result — and under a
-different seed it might never surface at all.
+The verification methodology I was most interested in exploring was
+**constrained-random verification (CRV)**. Rather than relying solely on
+directed tests, I wanted to build an environment that could generate varied
+traffic, compare results against reference models, collect functional coverage,
+and continuously check protocol rules with assertions.
 
-So the environment checks the protocol *directly*:
+A cache-coherence design provides a useful setting for that methodology. Random
+traffic can expose interactions that are difficult to anticipate manually, while
+targeted constraints can increase pressure on specific behaviors such as
+ownership transfers, sharing, false sharing, evictions, writebacks, and
+replacement. The scoreboard and coverage model then provide feedback about both
+correctness and which parts of the design the stimulus actually exercised.
 
-- a whitebox monitor taps each cache's tag and state arrays
-- the scoreboard re-checks the **SWMR invariant**
-  (Single-Writer / Multiple-Reader) across both caches every time any line
-  changes state
-- functional coverage crosses the two caches' states for a line, and the
-  combinations MESI forbids are encoded as `illegal_bins`
-
-That last item is the artifact I would point at in an interview. The cross is
-not there to be filled — it is there so that any state pair MESI forbids is a
-simulation error the moment it occurs.
+This project is my attempt to develop those design and verification skills in a
+way I find technically interesting. The cache implementation is
+intentionally focused enough to remain manageable, while the verification
+environment is designed to demonstrate the CRV workflow: constrained stimulus,
+transaction monitoring, reference-model checking, functional coverage,
+assertions, and failure diagnosis.
 
 ---
 
@@ -86,24 +79,24 @@ simulation error the moment it occurs.
 graph TB
   subgraph DUT["DUT — cache_top"]
     L0["l1_cache #(CORE_ID=0)<br/>tag / state / data / PLRU"]
-    L1["l1_cache #(CORE_ID=1)"]
+    L1["l1_cache #(CORE_ID=1)<br/>tag / state / data / PLRU"]
     BUS["coherence_bus<br/>round-robin arbiter<br/>snoop broadcast<br/>AXI4-Lite master"]
   end
 
   C0["core 0"] -->|core_if<br/>OBI req/gnt/rvalid| L0
-  C1["core 1"] -->|core_if| L1
+  C1["core 1"] -->|core_if<br/>OBI req/gnt/rvalid| L1
   L0 <-->|bus_if<br/>ACE-style snoop bus| BUS
-  L1 <-->|bus_if| BUS
+  L1 <-->|bus_if<br/>ACE-style snoop bus| BUS
   BUS -->|axil_if<br/>AXI4-Lite| MEM["memory"]
 ```
 
-Three protocol boundaries, deliberately three *different* protocols:
+There are three protocol boundaries and three different protocols:
 
-| Boundary | Protocol | In one line |
+| Boundary | Protocol | Purpose and rationale |
 |---|---|---|
-| core ↔ L1 | OBI-style `req`/`gnt`/`rvalid` | What a core actually presents to its L1 |
-| L1 ↔ L1 | simplified ACE | The only one of the three that *can* carry coherence |
-| interconnect ↔ memory | AXI4-Lite | A real standard protocol, where it is cheap and useful |
+| core ↔ L1 | OBI-style `req`/`gnt`/`rvalid` | Matches the request and response behavior of a typical core-to-cache interface while keeping the cache-side agent simple. |
+| L1 ↔ L1 | Simplified ACE-inspired bus | Provides the snoop, ownership, and cache-line data signaling required for MESI coherence; AXI4-Lite cannot carry these transactions. |
+| Interconnect ↔ memory | AXI4-Lite | Uses a standard point-to-point memory protocol for line fills and writebacks, with each cache-line word transferred as a separate single-beat transaction. |
 
 Each choice is justified in [Design decisions](#design-decisions) below.
 
@@ -111,27 +104,22 @@ Each choice is justified in [Design decisions](#design-decisions) below.
 
 ## Design decisions
 
-Every decision here was a trade-off. The reasoning matters more than the outcome.
+All design decisions made and their rationale during bring up of this project are discussed here for transparency of thought process.
 
-The same decisions are marked in the source with a `DECISION:` comment, so
-`grep -rn "DECISION:" rtl/ verif/` walks you through them where they actually
-live. Everything else is commented at section level only.
+Note: decisions are marked in repo with a `DECISION:` comment, so
+`grep -rn "DECISION:" rtl/ verif/` allows you to locate where these decisions live. 
 
 ### Interfaces
 
-**The core side is OBI-style req/gnt/rvalid, not AXI.**
-Real cores do not talk to their L1 over AXI — Ibex and CV32E40P both present a
-`req`/`gnt` address phase followed by an `rvalid` response phase, which is what
-this interface is. Putting AXI here would add five independent channels, IDs and
-burst logic to a boundary that issues one aligned word at a time, buying driver
-and monitor complexity with no additional coverage. The one thing it would buy —
-"I built an agent for a standard protocol" — is recovered at the memory boundary
-for a fraction of the effort.
-*Trade-off:* the core agent is bespoke, so it is not reusable outside this
+#### **The core side is OBI-style req/gnt/rvalid, not AXI.**
+Real cores do not talk to their L1 over AXI (real cores such as Ibex and CV32E40P, which are open source cores by lowRISC and OpenHW Group), they present a
+`req`/`gnt` address phase followed by an `rvalid` response phase. Putting AXI here would add five independent channels, IDs and
+burst logic to a boundary that issues one aligned word at a time, which brings driver
+and monitor complexity with no additional coverage. 
+*Trade-off:* the core agent is custom, so it is not reusable outside this
 project.
 
-**The coherence bus is a simplified ACE, and it is not AXI4-Lite for a
-structural reason.**
+#### **The coherence bus is a simplified ACE, and it is not AXI4-Lite for a structural reason.**
 AXI4-Lite physically cannot carry coherence. It has no snoop address channel, no
 snoop response channel, no snoop data channel, and no way for a master to
 declare or be told a cache-line state. It is a single-beat, point-to-point
@@ -151,7 +139,7 @@ channels, ordering rules, barriers and distributed virtual memory transactions.
 *Trade-off:* this is **ACE-inspired, not ACE-compliant**, and should never be
 described as the latter. Full ACE is a multi-week project on its own.
 
-**The memory side is genuine AXI4-Lite.**
+#### **The memory side is genuine AXI4-Lite.**
 This is the one boundary where a standard protocol is both a natural fit and
 cheap: a line fill really is a sequence of plain address/data/response
 transactions with no coherence content. Making it real AXI4-Lite yields a
@@ -163,7 +151,7 @@ single-beat transactions rather than one burst. Correct, but not what a real
 fill port would do; AXI4 with bursts would be more realistic at the cost of
 burst and ID handling that adds no verification value here.
 
-**Why not just use one protocol everywhere.**
+#### **Why not just use one protocol everywhere.**
 Using AXI at all three boundaries would be the cargo-cult answer: wrong at the
 core side, impossible at the coherence side, and only correct at the memory
 side. Real SoCs use different protocols at different boundaries because the
@@ -172,7 +160,7 @@ being demonstrated.
 
 ### Microarchitecture
 
-**The bus is atomic, so MESI has no transient states.**
+#### **The bus is atomic, so MESI has no transient states.**
 A grant is held across snoop, memory access and response, so a cache is never
 snooped while it owns the bus and every line is in one of the four stable states
 at every clock edge. See [Why the bus is atomic](#why-the-bus-is-atomic).
@@ -180,7 +168,7 @@ at every clock edge. See [Why the bus is atomic](#why-the-bus-is-atomic).
 transient state machine (`IM_AD`, `SM_AD`, …), which is where most genuine MESI
 difficulty lives.
 
-**The cache is blocking, with one outstanding miss.**
+#### **The cache is blocking, with one outstanding miss.**
 MSHRs, hit-under-miss and memory-level parallelism would have consumed the whole
 schedule and displaced the coherence work, which is the point of the project.
 Blocking also keeps the scoreboard's ordering argument tractable: a completing
@@ -188,7 +176,7 @@ access always retires before the ownership transfer that follows it.
 *Trade-off:* the design has no memory-level parallelism and its performance is
 uninteresting. This is a correctness project, not a performance one.
 
-**Invalid ways are preferred over the PLRU victim, lowest index first.**
+#### **Invalid ways are preferred over the PLRU victim, lowest index first.**
 Allocating into a free way avoids a pointless eviction. Breaking ties by lowest
 index rather than arbitrarily keeps victim selection deterministic, which makes
 failures reproducible across seeds.
@@ -201,7 +189,7 @@ This is the only genuine race an atomic bus does not remove, and it is handled
 in the RTL rather than assumed away. Details in
 [The one race an atomic bus does not remove](#the-one-race-an-atomic-bus-does-not-remove).
 
-**Silent clean eviction is implemented, not avoided.**
+#### **Silent clean eviction is implemented, not avoided.**
 Dropping an `S` or `E` line without telling anyone is legal MESI, and it means a
 cache can sit in `S` believing a line is shared when it is the only holder. It
 would have been easier to notify on every eviction; implementing the
@@ -210,7 +198,7 @@ reference model to avoid assuming precision.
 
 ### Configuration and parameterisation
 
-**Geometry is a verification variable, not a constant.**
+#### **Geometry is a verification variable, not a constant.**
 `NUM_WAYS`, `NUM_SETS`, `LINE_BYTES` and `NUM_CORES` are all configurable, for
 three distinct reasons:
 
@@ -226,7 +214,7 @@ three distinct reasons:
    under random stimulus over a 4 KB region, conflict misses, evictions and
    writebacks happen constantly instead of rarely.
 
-**Both geometries are exercised, and the second one is not a formality.**
+#### **Both geometries are exercised, and the second one is not a formality.**
 `eviction_test` passes at 4-way/8-set with no source changes, which is what makes
 the first two claims above evidence rather than intent — at four ways the PLRU is
 genuinely two levels of decision over three bits per set, not a single LRU bit.
@@ -236,7 +224,7 @@ from 14 to 3, because a working set that thrashed a 2-way set largely fits in a
 it fall out of your own design is a useful check that the replacement logic is
 doing what it claims.
 
-**Configuration is by `+define+`, not module parameters.**
+#### **Configuration is by `+define+`, not module parameters.**
 The geometry has to be visible inside a `package` — the address field widths,
 `tag_t` / `index_t` / `line_t`, and the helper functions all depend on it — and
 SystemVerilog packages cannot be parameterised. The UVM classes import that same
@@ -247,7 +235,7 @@ per-run inside a single build. It is a per-build regression axis instead.
 
 ### Verification architecture
 
-**The environment is whitebox on purpose.**
+#### **The environment is whitebox on purpose.**
 SWMR is a statement about *state*, not about transactions, and it cannot be
 checked from the core interfaces at all. A blackbox-only testbench catches a
 coherence bug only in the seeds where it happens to surface as a wrong load
@@ -257,7 +245,7 @@ state arrays turns a latent, seed-dependent bug into an immediate error.
 routing everything through one interface and one generate block in
 [verif/tb/tb_top.sv](verif/tb/tb_top.sv), so a rename touches one file.
 
-**The probe is wired with hierarchical assignments rather than `bind`.**
+#### **The probe is wired with hierarchical assignments rather than `bind`.**
 `bind` is the more idiomatic construct, but the target flow was uncertain and
 hierarchical references index identically on every simulator. `bind` *is* used
 for the assertion modules, where it is both standard and well supported.
@@ -955,13 +943,13 @@ testbench actually checks something.
 **All five are detected.** Results and the per-mechanism breakdown are at the
 [end of this section](#all-five-side-by-side).
 
-| Define | Injected bug | Caught by | Status |
-|---|---|---|---|
-| `BUG_1` | Snooped **M** line goes to **E** instead of **S** on `ReadShared` | `cg_mesi` illegal bin `m_to_e` | **DETECTED** at 1.46 us |
-| `BUG_2` | `CleanUnique` does not invalidate the sharer | `cg_share` illegal bin `ms` | **DETECTED** at 7.68 us |
-| `BUG_3` | Store hit ignores byte enables | Golden-memory load mismatch | **DETECTED** — 11 errors, exit 0 |
-| `BUG_4` | Dirty victim evicted without a writeback | `cg_mesi` illegal bin `dirty_dropped` | **DETECTED** at 3.67 us |
-| `BUG_5` | `ReadShared` always installs **E** | `cg_share` illegal bin `se` | **DETECTED** at 1.80 us |
+| Define | Injected bug | Caught by | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| `BUG_1` | Snooped **M** line goes to **E** instead of **S** on `ReadShared` | `cg_mesi` illegal bin `m_to_e` | **DETECTED** at 1.46 us | [view](docs/screenshots/bug_1.png) |
+| `BUG_2` | `CleanUnique` does not invalidate the sharer | `cg_share` illegal bin `ms` | **DETECTED** at 7.68 us | [view](docs/screenshots/bug_2.png) |
+| `BUG_3` | Store hit ignores byte enables | Golden-memory load mismatch | **DETECTED** — 11 errors, exit 0 | [view](docs/screenshots/bug_3.png) |
+| `BUG_4` | Dirty victim evicted without a writeback | `cg_mesi` illegal bin `dirty_dropped` | **DETECTED** at 3.67 us | [view](docs/screenshots/bug_4.png) |
+| `BUG_5` | `ReadShared` always installs **E** | `cg_share` illegal bin `se` | **DETECTED** at 1.80 us | [view](docs/screenshots/bug_5.png) |
 
 Put the define in **Compile Options** on Playground and run `eviction_test`:
 
@@ -1441,24 +1429,24 @@ are written but unexercised; see [Future extensions](#1-a-simulator-without-a-li
 > [Future extensions](#1-a-simulator-without-a-licence-ceiling)), and different
 > tests close different bins, so the union is certainly higher than any row here.
 
-| Metric | Value |
-|---|---|
+| Metric | Value | Evidence |
+| --- | --- | --- |
 | Compiles (Questa 2025.2, UVM 1.1d, 37 files) | **0 errors, 0 warnings** |
 | Elaborates (`vopt`) | **0 errors** |
 | Compiles + elaborates (VCS X-2025.06, UVM 1.2) | **0 errors** |
-| `smoke_test` | **PASS** — 0 UVM errors, 0 assertion failures |
-| `mesi_walk_test` | **PASS** — all ten MESI transitions walked |
-| `pingpong_test` (60 accesses, one word) | **PASS** — 71 ownership migrations |
-| `eviction_test` (60 accesses, one set) | **PASS** — 14 writebacks, memory reconciled |
-| `eviction_test` at **4-way / 8-set** | **PASS** — 0 errors, unchanged sources |
-| `upgrade_race_test` | **PASS** — 6 of 6 rounds hit the degradation path |
-| `producer_consumer_test` | **PASS** — ordering held across 2 lines |
-| `false_sharing_test` | **PASS** — all 4 words of one line, 27 ownership transfers |
-| `store_streak_test` | **PASS** — 90 stores, only 5 bus transactions |
-| `read_mostly_test` | **PASS** — 60 loads, zero ownership acquired |
-| `shared_region_test` | **PASS** — `cg_share` closed at 100 % |
-| `random_test` (130 accesses, 4 KB) | **PASS** — `cg_alloc` closed at 100 %, 95.80 % overall |
-| `regression_test` (269 accesses, 3–6 phases) | **PASS** — **98.92 % overall**, best single run |
+| `smoke_test` | **PASS** — 0 UVM errors, 0 assertion failures | [view](docs/screenshots/smoke_test.png) |
+| `mesi_walk_test` | **PASS** — all ten MESI transitions walked | [view](docs/screenshots/mesi_walk_test.png) |
+| `pingpong_test` (60 accesses, one word) | **PASS** — 71 ownership migrations | [view](docs/screenshots/pingpong_test.png) |
+| `eviction_test` (60 accesses, one set) | **PASS** — 14 writebacks, memory reconciled | [view](docs/screenshots/eviction_test.png) |
+| `eviction_test` at **4-way / 8-set** | **PASS** — 0 errors, unchanged sources | [view](docs/screenshots/eviction_test_4way_8set.png) |
+| `upgrade_race_test` | **PASS** — 6 of 6 rounds hit the degradation path | [view](docs/screenshots/upgrade_race_test.png) |
+| `producer_consumer_test` | **PASS** — ordering held across 2 lines | [view](docs/screenshots/producer_consumer_test.png) |
+| `false_sharing_test` | **PASS** — all 4 words of one line, 27 ownership transfers | [view](docs/screenshots/false_sharing_test.png) |
+| `store_streak_test` | **PASS** — 90 stores, only 5 bus transactions | [view](docs/screenshots/store_streak_test.png) |
+| `read_mostly_test` | **PASS** — 60 loads, zero ownership acquired | [view](docs/screenshots/read_mostly_test.png) |
+| `shared_region_test` | **PASS** — `cg_share` closed at 100 % | [view](docs/screenshots/shared_region_test.png) |
+| `random_test` (130 accesses, 4 KB) | **PASS** — `cg_alloc` closed at 100 %, 95.80 % overall | [view](docs/screenshots/random_test.png) |
+| `regression_test` (269 accesses, 3–6 phases) | **PASS** — **98.92 % overall**, best single run | [view](docs/screenshots/regression_test.png) |
 | Tests × seeds passing | **12 of 12**, single seed |
 | Geometries passing | **2 of 2** — 2-way/16-set and 4-way/8-set |
 | `cg_core` | 99.11 % |
@@ -1477,6 +1465,17 @@ are written but unexercised; see [Future extensions](#1-a-simulator-without-a-li
 A pass is the least interesting thing a test produces. These are the findings
 worth keeping — the cases where a number was derivable in advance and matched, or
 where a run contradicted something the project believed.
+
+The project also identified and resolved five issues during bring-up and
+verification. They covered tool-flow integration, simulation setup, RTL
+protocol behavior, coverage modeling, and checker correctness. The full
+investigations are documented in [docs/DEBUG_LOG.md](docs/DEBUG_LOG.md).
+
+Two findings are especially important: **no single checking mechanism catches
+more than two of the five injected bugs**, and the `BUG_3` run returned coverage
+**byte-identical** to the clean run while eleven data corruptions were present.
+These results show why coherence verification requires complementary data,
+state, protocol, and coverage checks.
 
 | Run | Finding |
 |---|---|
@@ -1572,134 +1571,155 @@ percentage cannot express that.
 
 ## Scope decisions and limitations
 
-The *reasoning* is in [Design decisions](#design-decisions). This is the terse
-list of what is not built, stated explicitly because knowing what you left out
+The *reasoning* is in [Design decisions](#design-decisions). This list is of what is not built, and is related to [Future extensions](#future-extensions).
 matters:
 
 - **Atomic bus, so no transient states.** The realistic next step is a
   split-transaction bus, which requires MESI transient states and is where most
   of the genuine protocol difficulty lives.
-- **Blocking cache, one outstanding miss.** No MSHRs, no hit-under-miss, no
+- **Blocking cache with a single outstanding request** No MSHRs, no hit-under-miss, no
   memory-level parallelism.
 - **Two cores, snooping, no directory.** Snooping does not scale past a handful
-  of cores; a directory protocol is the scalable alternative.
-- **Data cache only.** No instruction cache, no TLB, no virtual addressing.
-- **No cache maintenance operations**, no barriers, no atomics/LR-SC.
-- **AXI4-Lite has no bursts**, so a line fill is `LINE_WORDS` separate
-  single-beat transactions. Correct, but not what a real fill port would do.
-- **No mid-test reset.** Reset is asserted once at time zero; the drivers assume
-  it stays deasserted.
-- **`cg_share` assumes exactly two cores** and is not constructed otherwise.
-- Sequential consistency here is a *consequence* of blocking caches plus an
+  of cores; a directory protocol is the scalable alternative. 
+  - **`cg_share` assumes exactly two cores** and is not constructed otherwise. Sequential consistency here is a *consequence* of blocking caches plus an
   atomic bus, not something the design works to provide. A weaker, faster design
   would need a real memory-model argument.
+- **Data cache only.** No instruction cache, no TLB, no virtual addressing.
+- **No cache maintenance operations**, no barriers, no atomics/LR-SC.
+- **AXI4-Lite has no bursts**, currently, a line fill is `LINE_WORDS` separate
+  single-beat transactions.
+- **No mid-test reset.** Reset is asserted once at time zero; the drivers assume
+  it stays deasserted.
 
 ---
 
-## Future extensions
+## Future extensions  
 
-Ordered roughly by how much they would improve the project relative to effort.
+### A split-transaction coherence bus and transient MESI states
 
-### 1. A simulator without a licence ceiling
+The most valuable next step would be to support transient MESI states.
+The current design deliberately uses an atomic coherence bus, which removes the
+need for transient states by holding the bus grant through snooping, any required
+memory access, and the final response.
 
-This is the single biggest constraint on the project, and it is a tooling
-constraint rather than a design one. Questa Starter cannot simulate class-based
-SystemVerilog at all; EDA Playground can, but caps CPU time, has no regression
-runner, and provides no coverage database. A full Questa, VCS or Xcelium licence
-would unlock, in order of value:
+- **Split-transaction coherence bus.** Replace the current atomic bus with
+  separate request, snoop, data-transfer, and response phases.
 
-- **Merged coverage across runs.** Right now every run reports its own
-  instantaneous coverage and there is no way to accumulate. A UCDB/VDB merge
-  would turn the coverage numbers from "what one seed happened to reach" into a
-  real closure metric. The current figures materially *understate* what the
-  environment can reach, because nothing accumulates.
-- **Real regressions.** `sim/Makefile` already carries a `regress` target that
-  compiles once and loops tests × seeds. It has never been run — there is no
-  make on the authoring shell and no simulation licence on the run machine — so
-  it is a sketch of the flow rather than tested infrastructure. With a licence it
-  becomes 12 tests × 50+ seeds in parallel, rather than one test at a time in a
-  browser tab.
-- **Volume.** `+num_txns` in the thousands instead of tens. The rare corners —
-  4-way conflict evictions, the `CleanUnique`→`ReadUnique` degradation race,
-  three-deep writeback chains — need traffic to appear at all. The first smoke
-  run produced `CleanUnique=0` and `WriteBack=0` purely because ten transactions
-  cannot reach them.
-- **Code coverage.** Nothing currently measures line, branch, toggle or FSM
-  coverage on the RTL. Statement and FSM-arc coverage on `l1_cache` would show
-  which state transitions the random stimulus never takes — the complement of the
-  functional coverage model, and the thing most likely to expose an untested path.
-- **Coverage-driven seed ranking**, assertion coverage reporting, and waveform
-  debug at a scale Playground cannot sustain.
+- **Transient MESI states.** The current atomic bus prevents a cache from being
+  snooped while it owns the bus, allowing every line to remain in one of the
+  stable states **I**, **S**, **E**, or **M**. A split-transaction bus would
+  require transient states such as `IM_AD` and `SM_AD` to represent requests
+  waiting for ownership, data, or completion.
 
-### 2. Fully specified protocols
+- **In-flight coherence verification.** Extend the UVM environment to verify
+  transient-state snoop responses, competing ownership requests, response
+  ordering, data forwarding, invalidation races, and recovery from delayed or
+  conflicting transactions.
 
-The three interfaces are deliberately simplified. Each could be taken to the real
-standard:
+- **More realistic MESI behavior.** This extension would remove the atomic-bus
+  simplification that currently keeps the MESI state machine small. 
+
+### Fully specified protocols
+
+The three interfaces implemented in this design are simplified. Each could be taken to the real standard:
 
 - **Full ACE instead of ACE-inspired.** The current coherent bus borrows ACE's
   vocabulary but not its structure. A real implementation means the actual
   AC/CR/CD snoop channels, the complete transaction set (`ReadOnce`,
   `ReadNotSharedDirty`, `CleanShared`, `WriteBack`/`WriteClean`/`Evict`),
-  barriers, and DVM. The payoff beyond realism is that a commercial ACE VIP could
-  then be dropped in as an independent reference model.
-- **AXI4 with bursts on the memory side.** A line fill is currently `LINE_WORDS`
-  separate single-beat AXI4-Lite transactions. Real AXI4 would make it one `INCR`
-  burst, adding `AWLEN`/`ARLEN`/`WLAST` handling and out-of-order response IDs —
-  which in turn makes the memory agent's scoreboarding genuinely non-trivial.
-- **Split-transaction coherent bus.** The most valuable of the three. Removing
-  the atomic-bus simplification forces MESI transient states (`IM_AD`, `SM_AD`,
-  and friends), which is where the real protocol difficulty lives. Roughly
-  triples both the RTL and the verification effort, and is the natural "what
-  would you do next" answer.
+  barriers, and DVM. A commercial ACE VIP could be dropped in as an independent reference model.
+- **AXI4 with bursts on the memory side.** The current AXI4-Lite interface
+  transfers a cache line as `LINE_WORDS` independent single-beat transactions.
+  A full AXI4 implementation could represent each line fill or writeback as one
+  incrementing burst, using `ARLEN`/`AWLEN` for the burst length and
+  `RLAST`/`WLAST` to mark the final beat. Supporting multiple outstanding
+  bursts would introduce transaction IDs, response tracking, and
+  potentially out-of-order completion, all enhancements to the memory agent.
 
-### 3. A bigger, more realistic cache
+### Realistic caches
 
-- **Non-blocking with MSHRs** — hit-under-miss, multiple outstanding misses, and
+- **Non-blocking with MSHRs** hit-under-miss, multiple outstanding misses, and
   memory-level parallelism. Currently one outstanding miss, which is what keeps
   the scoreboard's ordering argument simple; removing it means reasoning about
-  completion order properly.
-- **More ways and sets.** The tree-PLRU is already parameterised, but only 2-way
-  and 4-way configurations have been considered.
-- **A multi-level hierarchy.** An L2 with an inclusion or exclusion policy, which
-  introduces back-invalidation and a second coherence boundary.
-- **More than two cores.** The snoop bus is parameterised for N, but `cg_share`
-  assumes exactly two and is not constructed otherwise. Past roughly four cores
-  snooping stops scaling and a **directory protocol** becomes the correct answer
-  — a substantially different design.
-- Write buffers, a victim cache, and prefetching.
+  completion order.
+- **More ways and sets.** The tree-PLRU replacement logic is parameterized, but
+  only the `2-way / 16-set` and `4-way / 8-set` geometries have been verified.
+  Additional configurations would test whether the RTL and verification
+  environment generalize beyond the two configurations already exercised.
+- **A multi-level hierarchy.** An L2 with an inclusion or exclusion policy to
+  introduce back-invalidation and a second coherence boundary.
+- **More than two cores.** The snoop bus is parameterised for N, but current `cg_share`
+  assumes exactly two and is not constructed otherwise. Past ~four cores
+  snooping stops scaling and a **directory protocol** becomes the correct answer.
+- **Additional cache optimizations.** Add write buffers, a victim cache, and
+  prefetching to improve throughput and reduce the cost of misses and writebacks.
 
-### 4. Deeper coverage
+### Deeper coverage
 
-- **Cross bus operation × MESI state × requester.** These are covered separately
-  today; the interesting question is which coherence operations occur from which
-  states, which only a cross answers.
+Note: These coverage extensions are technically feasible with the current
+architecture, but they require additional instrumentation, cross-stream
+correlation, or multi-configuration result management that the present flow (Questa Starter, EDA playground) does
+not or minimally provides.
+
+- **Cross bus operation × MESI state × requester.** These are currently covered separately. The interesting question is which coherence operations occur from which states, which only a cross answers.
 - **Transition sequences, not just pairs.** `cg_mesi` covers old→new state pairs.
   It does not cover *paths* — that `I→E→M→S→I` occurred as an ordered sequence.
 - **Arbiter coverage.** Back-to-back grants to the same core, strictly
-  alternating grants, and the starvation window that round-robin is supposed to
-  prevent.
-- **Assertion coverage.** Proving each SVA antecedent actually fired, rather than
-  only that nothing failed. A property that never triggers proves nothing, and
-  there is currently no evidence which ones are live.
+  alternating grants, and a starvation window (that round-robin is supposed to
+  prevent).
+- **Assertion coverage.** Proving each SVA antecedent actually fired, instead of only that 
+  nothing failed. A property that never triggers does not prove anything and currently we do not 
+  collect evidence that it does. 
 - **Latency and timing bins** — memory latency crossed against observed miss
-  penalty, to show the randomised `axil_agent_cfg` delays are doing real work.
+  penalty, to show the randomised `axil_agent_cfg` delays.
 - **Geometry crossed with behaviour** — running the full coverage model at 4-way
   and comparing which bins only close at one configuration.
 
-### 5. Verification methodology
+### Verification methodology
 
 - **Mid-test reset.** Reset is currently asserted once at time zero and the
-  drivers assume it stays deasserted. Asynchronous reset during traffic is a
-  standard requirement and a common source of real bugs.
-- **Formal property checking on the MESI FSM.** The atomic-bus design keeps the
+  drivers assume it stays deasserted throughout the test. Handling reset
+  during active traffic would require the cache, bus, memory interface, monitors,
+  scoreboard, and coverage model to recover cleanly from interrupted
+  transactions(though, in my experience, resets
+  are more commonly/meaningfully tested in directed tests, and wouldn't be the main target of interest for a 
+  constrained random verification environment).
+- **Formal property checking on the MESI FSM.** The current atomic-bus design keeps the
   state space small enough for model checking to be tractable, which would let
   SWMR be *proven* rather than sampled.
 - **A real memory-consistency litmus suite.** `producer_consumer_vseq` is one
   message-passing test; a proper suite (store buffering, independent reads of
-  independent writes, coherence litmus tests) would let the sequential-consistency
-  claim be argued from evidence.
+  independent writes, coherence litmus tests) would let the sequential consistency
+  claim be verifiable. 
 - **X-propagation and power-aware simulation**, neither of which this environment
   currently attempts.
+
+### A simulator without a licence ceiling
+
+Regrettably, there is a tooling constraint rather than a design one. 
+Questa Altera FPGA Starter cannot simulate class-based SystemVerilog at all. EDA Playground can,
+but it caps CPU time, has no regression runner, and provides no coverage database. 
+A full Questa, VCS or Xcelium licence would unlock, in order of value:
+
+- **Merged coverage across runs.** Right now every run reports its own
+  instantaneous coverage and there is no way to accumulate. A UCDB/VDB merge
+  would make coverage more meaningful and allow us to quantify exactly how effective
+  our current environment is at reaching 100% coverage. The current figures materially 
+  *understate* what the environment can reach because nothing accumulates.
+- **Real regressions.** `sim/Makefile` already carries a `regress` target that
+  compiles once and loops tests × seeds. The main issue is that due to tooling constraints,
+  It has never been run so it is a sketch of the flow rather than tested infrastructure. 
+  With a licence it becomes 12 tests × 50+ seeds in parallel, rather than one test at a time in a
+  browser tab.
+- **Volume.** `+num_txns` in the thousands instead of tens. Rare corner cases
+  (4-way conflict evictions, the `CleanUnique`→`ReadUnique` degradation race,
+  three-deep writeback chainsm, etc) need traffic to appear at all. 
+- **Code coverage.** Nothing currently measures line, branch, toggle or FSM
+  coverage on the RTL. Statement and FSM-arc coverage on `l1_cache` would show
+  which state transitions the random stimulus never takes. Code coverage would complement
+  the functional coverage model by revealing implementation paths and FSM transitions that the testbench has not executed.
+- **Coverage-driven seed ranking**, assertion coverage reporting, and waveform
+  debug at a scale EDA Playground cannot sustain.
 
 ---
 
@@ -1742,10 +1762,3 @@ braytcache/
 │   └── DEBUG_LOG.md          every defect the tools found, and why
 └── PROGRESS.md               status, decisions, session log
 ```
-
-The `rtl/` + `verif/{agents,env/seq_lib,tests,sva,tb}` split follows the layout
-used by OpenHW (CVA6) and lowRISC (OpenTitan, Ibex): reusable agents kept apart
-from the block-specific environment, sequences owned by the environment.
-
-Comments are section-level only. Anything marked `DECISION:` is a deliberate
-trade-off rather than a description of the code beneath it.

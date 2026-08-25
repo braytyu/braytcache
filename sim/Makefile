@@ -1,4 +1,4 @@
-# NOTE: NEXERCISED. no targets were ever run successfully. 
+# NOTE: NOTEXERCISED. no targets were ever run successfully. 
 #
 # All targets were written for a full simulator license. 
 # In the absence of a license, the tool_check targets can be used to verify that the
