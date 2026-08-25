@@ -109,8 +109,6 @@ All design decisions made and their rationale during bring up of this project ar
 Note: decisions are marked in repo with a `DECISION:` comment, so
 `grep -rn "DECISION:" rtl/ verif/` allows you to locate where these decisions live. 
 
----
-
 ### Interfaces
 
 #### OBI-style req/gnt/rvalid for core, not AXI.
@@ -150,7 +148,7 @@ burst and ID handling).
 #### Why not just use one protocol everywhere?
 Different protocols are exercised at different boundaries, like in real SoC's. 
 
-### Microarchitecture
+### Microarchitecture START FROM HERE WHEN YOU ARE BACK AUG 25 3:50AM 2026
 
 #### The bus is atomic, so MESI has no transient states.
 A grant is held across snoop, memory access and response, so a cache is never
